@@ -1,0 +1,77 @@
+{
+  "version": 1,
+  "objects": [
+    {
+      "id": "00000000-0000-4000-8000-000000000001",
+      "type": "stage",
+      "x": 420,
+      "y": 40,
+      "width": 360,
+      "height": 100,
+      "rotation": 0,
+      "label": "Stage & backdrop",
+      "color": "#5c6670",
+      "meta": { "notes": "Garden-view side — evergreen and fern backdrop" }
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000002",
+      "type": "dance_floor",
+      "x": 440,
+      "y": 200,
+      "width": 320,
+      "height": 220,
+      "rotation": 0,
+      "label": "Dance floor",
+      "color": "#d8cfc0",
+      "meta": {}
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000003",
+      "type": "sweetheart_table",
+      "x": 540,
+      "y": 160,
+      "width": 120,
+      "height": 60,
+      "rotation": 0,
+      "label": "Sweetheart",
+      "color": "#b89b5e",
+      "meta": { "seatCount": 2, "guestNames": ["Couple"] }
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000004",
+      "type": "round_table",
+      "x": 200,
+      "y": 220,
+      "width": 96,
+      "height": 96,
+      "rotation": 0,
+      "label": "Table 1",
+      "color": "#f4f1ea",
+      "meta": { "seatCount": 8, "guestNames": [] }
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000005",
+      "type": "buffet_table",
+      "x": 40,
+      "y": 40,
+      "width": 280,
+      "height": 56,
+      "rotation": 0,
+      "label": "Buffet line",
+      "color": "#8b6f47",
+      "meta": { "notes": "Regional cold & warm stations — lechon carving optional" }
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000006",
+      "type": "entrance",
+      "x": 560,
+      "y": 720,
+      "width": 80,
+      "height": 40,
+      "rotation": 0,
+      "label": "Entrance",
+      "color": "#4a6b4f",
+      "meta": {}
+    }
+  ]
+}
