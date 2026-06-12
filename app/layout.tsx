@@ -37,7 +37,7 @@ export default function RootLayout({
       <body className="min-h-[100dvh] bg-background font-sans text-foreground antialiased">
         <ThemeProvider>
           {children}
-          <Toaster richColors closeButton position="top-center" />
+          <Toaster closeButton position="top-center" />
         </ThemeProvider>
       </body>
     </html>

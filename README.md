@@ -5,7 +5,7 @@ Production-style MVP for planning **wedding and event seating** and **2D venue l
 ## Features
 
 - **Supabase auth** — email/password sign-up and sign-in; protected dashboard and layout routes; **forgot password** with email reset and optional **Cloudflare Turnstile** on the reset request.
-- **Dashboard** — list layouts with last updated time; create (optionally from a **sample ballroom** template), duplicate, and delete.
+- **Dashboard** — list layouts with last updated time; create with **venue setting** (ballroom, church, or outdoor/garden), **adjustable page size**, optional **starter template** per venue, duplicate, and delete.
 - **Layout editor** — drag objects from the library onto the canvas, move and resize, rotate, duplicate/delete selection, **zoom**, **grid** and **snap-to-grid**, **auto-save** every **10 minutes** when there are unsaved changes (keeps Supabase writes light on the free tier), plus **Save now**, unsaved indicator.
 - **Guest support** — for tables and similar objects: seat count, guest names (one per line), notes.
 - **Row Level Security** — each user only sees and mutates their own `layouts` rows.
@@ -29,7 +29,7 @@ npm install
 
    **A — SQL Editor (simplest)**  
    Dashboard → **SQL Editor** → **New query** → paste the full contents of  
-   `supabase/migrations/20250527000000_init.sql` → **Run**.
+   `supabase/migrations/` **in order** (e.g. `20250527000000_init.sql` then `20250529130000_layout_venue_setting.sql`) → **Run**.
 
    **B — From your machine (`npm run db:apply`)**  
    1. In Supabase: **Connect** → copy the **Postgres URI** under **Session pooler** (IPv4-friendly).  
@@ -40,7 +40,7 @@ npm install
       DATABASE_URL=postgresql://postgres...
       ```
 
-   3. From the project root:
+   3. From the project root (applies every `*.sql` in `supabase/migrations/` in sorted order):
 
       ```bash
       npm run db:apply
@@ -54,16 +54,16 @@ npm install
 
    > I can’t run this against your project from chat without your DB password. After you add `DATABASE_URL` locally, `npm run db:apply` runs entirely on your machine.
 
-3. **Auth URL configuration** (Authentication → URL configuration): add your local and production site URLs (e.g. `http://localhost:3000`, `https://your-app.vercel.app`).
+3. **Auth URL configuration** (Authentication → URL configuration): add your local and production site URLs (e.g. `http://localhost:3003`, `https://your-app.vercel.app`).
 
 4. **Password reset redirect** — add these to **Redirect URLs** (same Auth settings section):
 
-   - `http://localhost:3000/auth/confirm`
+   - `http://localhost:3003/auth/confirm`
    - `https://your-production-domain/auth/confirm`
 
    The app sends users through `/auth/confirm` (session exchange) then to `/auth/update-password`. That route accepts **either** Supabase’s default **PKCE** redirect (`?code=…`, same browser where you requested the reset — cookies must be present) **or** a **token hash** link from a customized template (`?token_hash=…&type=recovery`, works on another device). If reset links land on an error page, confirm redirect URLs and see the [password reset guide](https://supabase.com/docs/guides/auth/passwords#forgot-password).
 
-   **Sign-up confirmation** emails use the same `/auth/confirm` route with `next=/dashboard` (set in code). Use the same redirect URL allow list as above (include your real dev port, e.g. `http://localhost:3003/auth/confirm`).
+   **Sign-up confirmation** emails use the same `/auth/confirm` route with `next=/dashboard` (set in code). Use the same redirect URL allow list as above (match your dev port, e.g. `http://localhost:3003/auth/confirm`).
 
 5. **Email template (hosted projects)** — under **Authentication** → **Emails** → **Reset password**, ensure the message uses Supabase’s confirmation URL so the link hits your `/auth/confirm` route with `token_hash` and `type=recovery` (see the same passwords guide).
 
@@ -91,7 +91,7 @@ Never commit `.env.local`.
 - **Users are not in `public` tables by default.** Registered users appear under **Supabase Dashboard → Authentication → Users**, not only in the SQL **Table Editor** for `public.*`. The `profiles` row is created by a trigger **when** `auth.users` gets a real insert.
 - **Response with `identities: []`:** The signup form treats this as **email already registered** (Supabase anti-enumeration) and shows a field error — use **Sign in** or **Forgot password**. With **Confirm email** off, you may instead get an explicit API error, which is handled the same way.
 - **“Email not confirmed” on login:** Confirm the address from the email link, use **Resend confirmation email** on the login page, or (for local testing) open the user in the dashboard and confirm manually / temporarily disable **Confirm email** under Authentication providers.
-- **Email rate limits:** Supabase limits how many auth emails can be sent. Wait for the window to reset, then resend confirmation or reset password again.
+- **`fetch failed` / `[middleware] Supabase getUser` in the terminal:** Next.js **Edge** (see `proxy.ts`) cannot reach `http://127.0.0.1:54321` or `http://localhost:54321` — that “localhost” is not your Mac. Use your **hosted** `https://*.supabase.co` URL in `NEXT_PUBLIC_SUPABASE_URL` for this app, or rely on the built-in **cookie session** path when the URL is loopback (see `lib/supabase/middleware.ts`). For hosted projects, still verify the URL, keys, network/VPN, and that the project is not paused.
 
 ### 4. Run locally
 
@@ -99,7 +99,7 @@ Never commit `.env.local`.
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000), sign up, then open **Dashboard** → **New layout**.
+Open [http://localhost:3003](http://localhost:3003), sign up, then open **Dashboard** → **New layout**.
 
 ### 5. Deploy to Vercel
 
@@ -120,7 +120,7 @@ Ensure Supabase auth redirect URLs include your Vercel domain.
 | `components/layout-editor/` | Canvas, palette, properties, toolbar |
 | `components/dashboard/` | Dashboard grid, new layout dialog |
 | `components/auth/` | Login, signup, forgot-password, update-password forms, logout |
-| `lib/supabase/` | Browser + server clients, session middleware |
+| `lib/supabase/` | Browser + server clients, session refresh in `proxy.ts` (Edge) |
 | `stores/layout-editor-store.ts` | Editor UI state |
 | `types/layout.ts` | Canvas object types and layout row shape |
 | `supabase/migrations/` | SQL for schema + RLS |

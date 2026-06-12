@@ -2,13 +2,15 @@
 
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
-import {
-  bccSampleDocument,
-  DEFAULT_CANVAS_HEIGHT,
-  DEFAULT_CANVAS_WIDTH,
-  emptyLayoutDocument,
-} from "@/lib/sample-layout";
+import { emptyLayoutDocument } from "@/lib/sample-layout";
 import type { LayoutJsonDocument } from "@/types/layout";
+import {
+  VENUE_DEFAULT_CANVAS,
+  clampCanvasDimension,
+  initialLayoutDocumentForVenue,
+  parseVenueSetting,
+} from "@/lib/venue-settings";
+import { layoutsTableHasVenueSettingColumn } from "@/lib/layouts-venue-column";
 
 export async function createLayoutAction(formData: FormData) {
   const supabase = await createClient();
@@ -23,28 +25,40 @@ export async function createLayoutAction(formData: FormData) {
   const venueName = String(formData.get("venueName") ?? "").trim();
   const location = String(formData.get("location") ?? "").trim();
   const useTemplate = Boolean(formData.get("useTemplate"));
+  const venueSetting = parseVenueSetting(formData.get("venueSetting"));
+
+  const wRaw = Number(formData.get("canvasWidth"));
+  const hRaw = Number(formData.get("canvasHeight"));
+  const def = VENUE_DEFAULT_CANVAS[venueSetting];
+
+  const canvasWidth = clampCanvasDimension(
+    Number.isFinite(wRaw) ? wRaw : def.width,
+    def.width,
+  );
+  const canvasHeight = clampCanvasDimension(
+    Number.isFinite(hRaw) ? hRaw : def.height,
+    def.height,
+  );
 
   if (!name) {
     return { error: "Name is required" as const };
   }
 
-  const layoutJson: LayoutJsonDocument = useTemplate
-    ? bccSampleDocument()
-    : emptyLayoutDocument();
+  const layoutJson: LayoutJsonDocument = initialLayoutDocumentForVenue(venueSetting, useTemplate);
 
-  const { data, error } = await supabase
-    .from("layouts")
-    .insert({
-      user_id: user.id,
-      name,
-      venue_name: venueName || "Garden estate venue",
-      location: location || "Philippines",
-      canvas_width: DEFAULT_CANVAS_WIDTH,
-      canvas_height: DEFAULT_CANVAS_HEIGHT,
-      layout_json: layoutJson,
-    })
-    .select("id")
-    .single();
+  const hasVenueColumn = await layoutsTableHasVenueSettingColumn(supabase);
+  const insertRow = {
+    user_id: user.id,
+    name,
+    venue_name: venueName || "Garden estate venue",
+    location: location || "Philippines",
+    ...(hasVenueColumn ? { venue_setting: venueSetting } : {}),
+    canvas_width: canvasWidth,
+    canvas_height: canvasHeight,
+    layout_json: layoutJson,
+  };
+
+  const { data, error } = await supabase.from("layouts").insert(insertRow).select("id").single();
 
   if (error || !data) {
     return { error: error?.message ?? "Could not create layout" as const };
@@ -73,19 +87,23 @@ export async function duplicateLayoutAction(layoutId: string) {
     return { error: fetchError?.message ?? "Layout not found" as const };
   }
 
-  const { data, error } = await supabase
-    .from("layouts")
-    .insert({
-      user_id: user.id,
-      name: `Copy of ${row.name}`,
-      venue_name: row.venue_name,
-      location: row.location,
-      canvas_width: row.canvas_width,
-      canvas_height: row.canvas_height,
-      layout_json: row.layout_json as LayoutJsonDocument,
-    })
-    .select("id")
-    .single();
+  const doc = (row.layout_json ?? emptyLayoutDocument()) as LayoutJsonDocument;
+
+  const hasVenueColumn = await layoutsTableHasVenueSettingColumn(supabase);
+  const insertRow = {
+    user_id: user.id,
+    name: `Copy of ${row.name}`,
+    venue_name: row.venue_name,
+    location: row.location,
+    ...(hasVenueColumn
+      ? { venue_setting: parseVenueSetting((row as { venue_setting?: string }).venue_setting) }
+      : {}),
+    canvas_width: row.canvas_width,
+    canvas_height: row.canvas_height,
+    layout_json: doc,
+  };
+
+  const { data, error } = await supabase.from("layouts").insert(insertRow).select("id").single();
 
   if (error || !data) {
     return { error: error?.message ?? "Duplicate failed" as const };

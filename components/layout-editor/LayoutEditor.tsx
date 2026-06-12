@@ -1,12 +1,22 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useState, useSyncExternalStore } from "react";
 import type { LayoutRow } from "@/types/layout";
 import { useLayoutEditorStore } from "@/stores/layout-editor-store";
+import {
+  getLayoutEditorPanelPrefsServerSnapshot,
+  getLayoutEditorPanelPrefsSnapshot,
+  markLayoutEditorPanelPrefsHydrated,
+  patchLayoutEditorPanelPrefs,
+  subscribeLayoutEditorPanelPrefs,
+} from "@/lib/layout-editor-panel-prefs";
 import { TopToolbar } from "./TopToolbar";
 import { ObjectPalette } from "./ObjectPalette";
 import { CanvasWorkspace } from "./CanvasWorkspace";
+import { LayoutBallroom3D } from "./ballroom-3d/LayoutBallroom3D";
+import { Ballroom3DLeftPanel, Ballroom3DRightPanel } from "./ballroom-3d/Ballroom3DControls";
 import { PropertiesPanel } from "./PropertiesPanel";
+import { EditorSidebarRail } from "./editor-sidebar-rail";
 import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import {
@@ -16,16 +26,33 @@ import {
   SheetTitle,
   SheetTrigger,
 } from "@/components/ui/sheet";
-import { Library, SlidersHorizontal } from "lucide-react";
+import { Box, Camera, Library, SlidersHorizontal } from "lucide-react";
 
 interface LayoutEditorProps {
   initialRow: LayoutRow;
+  /** When false, saves omit `venue_setting` (DB column not present yet). */
+  persistVenueSetting: boolean;
 }
 
-export function LayoutEditor({ initialRow }: LayoutEditorProps) {
+export function LayoutEditor({ initialRow, persistVenueSetting }: LayoutEditorProps) {
   const hydrateFromRow = useLayoutEditorStore((s) => s.hydrateFromRow);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [propsOpen, setPropsOpen] = useState(false);
+  const editorDisplayMode = useLayoutEditorStore((s) => s.editorDisplayMode);
+  const is3D = editorDisplayMode === "ballroom_3d";
+  const panelPrefs = useSyncExternalStore(
+    subscribeLayoutEditorPanelPrefs,
+    getLayoutEditorPanelPrefsSnapshot,
+    getLayoutEditorPanelPrefsServerSnapshot,
+  );
+
+  useLayoutEffect(() => {
+    useLayoutEditorStore.setState({ persistVenueSettingToDb: persistVenueSetting });
+  }, [persistVenueSetting]);
+
+  useEffect(() => {
+    markLayoutEditorPanelPrefsHydrated();
+  }, []);
 
   useEffect(() => {
     hydrateFromRow(initialRow);
@@ -92,28 +119,61 @@ export function LayoutEditor({ initialRow }: LayoutEditorProps) {
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-[#f6f2ea]">
       <TopToolbar />
-      <div className="relative flex min-h-0 flex-1 gap-3 p-3 lg:p-4">
-        <div className="hidden lg:flex">
-          <ObjectPalette variant="sidebar" />
-        </div>
-        <CanvasWorkspace />
-        <div className="hidden xl:flex">
-          <PropertiesPanel />
+      {/* Sheets must not be flex siblings of the canvas row — Dialog Root can break horizontal layout */}
+      <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
+        <div className="relative flex min-h-0 min-w-0 flex-1 gap-2 p-2 sm:p-3 lg:gap-3 lg:p-4">
+          <div className="hidden shrink-0 lg:flex">
+            <EditorSidebarRail
+              side="left"
+              open={panelPrefs.leftOpen}
+              onOpenChange={(open) => patchLayoutEditorPanelPrefs({ leftOpen: open })}
+              label={is3D ? "3D controls" : "Venue library"}
+              collapsedCaption={is3D ? "3D" : "Library"}
+              icon={
+                is3D ? (
+                  <Camera className="size-5" aria-hidden />
+                ) : (
+                  <Library className="size-5" aria-hidden />
+                )
+              }
+            >
+              {is3D ? <Ballroom3DLeftPanel /> : <ObjectPalette variant="sidebar" />}
+            </EditorSidebarRail>
+          </div>
+          {editorDisplayMode === "floor_plan" ? <CanvasWorkspace /> : <LayoutBallroom3D />}
+          <div className="hidden shrink-0 xl:flex">
+            <EditorSidebarRail
+              side="right"
+              open={panelPrefs.rightOpen}
+              onOpenChange={(open) => patchLayoutEditorPanelPrefs({ rightOpen: open })}
+              label={is3D ? "3D scene" : "Properties"}
+              collapsedCaption={is3D ? "Scene" : "Props"}
+              icon={
+                is3D ? (
+                  <Box className="size-5" aria-hidden />
+                ) : (
+                  <SlidersHorizontal className="size-5" aria-hidden />
+                )
+              }
+            >
+              {is3D ? <Ballroom3DRightPanel /> : <PropertiesPanel />}
+            </EditorSidebarRail>
+          </div>
         </div>
         <Sheet open={paletteOpen} onOpenChange={setPaletteOpen}>
           <SheetTrigger
             type="button"
             className={fab("left")}
-            aria-label="Open venue library"
+            aria-label={is3D ? "Open 3D controls" : "Open venue library"}
           >
-            <Library className="size-5" />
+            {is3D ? <Camera className="size-5" /> : <Library className="size-5" />}
           </SheetTrigger>
           <SheetContent side="left" className="w-[min(100%,20rem)] gap-0 p-0">
             <SheetHeader className="border-b border-border px-4 py-3 text-left">
-              <SheetTitle>Venue library</SheetTitle>
+              <SheetTitle>{is3D ? "3D controls" : "Venue library"}</SheetTitle>
             </SheetHeader>
             <div className="p-3">
-              <ObjectPalette variant="sheet" />
+              {is3D ? <Ballroom3DLeftPanel /> : <ObjectPalette variant="sheet" />}
             </div>
           </SheetContent>
         </Sheet>
@@ -121,16 +181,16 @@ export function LayoutEditor({ initialRow }: LayoutEditorProps) {
           <SheetTrigger
             type="button"
             className={fab("right")}
-            aria-label="Open properties"
+            aria-label={is3D ? "Open 3D scene details" : "Open properties"}
           >
-            <SlidersHorizontal className="size-5" />
+            {is3D ? <Box className="size-5" /> : <SlidersHorizontal className="size-5" />}
           </SheetTrigger>
           <SheetContent side="right" className="w-[min(100%,22rem)] gap-0 p-0">
             <SheetHeader className="border-b border-border px-4 py-3 text-left">
-              <SheetTitle>Properties</SheetTitle>
+              <SheetTitle>{is3D ? "3D scene" : "Properties"}</SheetTitle>
             </SheetHeader>
             <div className="p-0">
-              <PropertiesPanel embedded />
+              {is3D ? <Ballroom3DRightPanel /> : <PropertiesPanel embedded />}
             </div>
           </SheetContent>
         </Sheet>

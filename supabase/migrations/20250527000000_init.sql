@@ -54,6 +54,7 @@ create table if not exists public.layouts (
   name text not null,
   venue_name text not null default 'Garden estate venue',
   location text not null default 'Philippines',
+  venue_setting text not null default 'ballroom' check (venue_setting in ('ballroom', 'church', 'outdoor_garden')),
   canvas_width integer not null default 1200,
   canvas_height integer not null default 800,
   layout_json jsonb not null default '{"version":1,"objects":[]}'::jsonb,

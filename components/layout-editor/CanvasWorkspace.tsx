@@ -12,6 +12,8 @@ import {
   isUniformScaleResizeType,
 } from "@/lib/canvas-resize";
 import { aabbIntersects, getObjectBoundingBox } from "@/lib/canvas-object-bounds";
+import { expandDragIdsForGroups } from "@/lib/layout-groups";
+import { findChairSlotSnapPosition, findChairSlotSnapPreview } from "@/lib/table-chair-slots";
 
 const LAYOUT_GRID = 20;
 const RESIZE_MIN = 16;
@@ -71,6 +73,12 @@ export function CanvasWorkspace() {
   );
 
   const [marqueeUI, setMarqueeUI] = useState<MarqueeSession | null>(null);
+  const [chairSlotPreview, setChairSlotPreview] = useState<{
+    tableId: string;
+    slotIndex: number;
+    chairWidth: number;
+    chairHeight: number;
+  } | null>(null);
 
   const objects = useLayoutEditorStore((s) => s.document.objects);
   const selectedIds = useLayoutEditorStore((s) => s.selectedIds);
@@ -166,11 +174,18 @@ export function CanvasWorkspace() {
       const st0 = useLayoutEditorStore.getState();
       st0.pushUndoSnapshot();
       st0.pickObject(id, additive);
-      beginPointerGesture();
       const st = useLayoutEditorStore.getState();
-      const ids = st.selectedIds;
+      const clicked = st.document.objects.find((x) => x.id === id);
+      if (clicked?.meta.locked) {
+        return;
+      }
+      const dragIds = expandDragIdsForGroups(st.selectedIds, st.document.objects);
+      if (dragIds.length === 0) {
+        return;
+      }
+      beginPointerGesture();
       const starts: Record<string, { x: number; y: number }> = {};
-      for (const oid of ids) {
+      for (const oid of dragIds) {
         const o = st.document.objects.find((x) => x.id === oid);
         if (o) starts[oid] = { x: o.x, y: o.y };
       }
@@ -179,7 +194,7 @@ export function CanvasWorkspace() {
       if (!o || !el) return;
       const { x, y } = clientToCanvas(el, e.clientX, e.clientY, canvasWidth, canvasHeight);
       dragRef.current = {
-        ids,
+        ids: dragIds,
         primaryId: id,
         starts,
         offsetX: x - o.x,
@@ -197,7 +212,7 @@ export function CanvasWorkspace() {
       if (!el) return;
       const st = useLayoutEditorStore.getState();
       const o = st.document.objects.find((x) => x.id === id);
-      if (!o) return;
+      if (!o || o.meta.locked) return;
       st.pushUndoSnapshot();
       st.beginPointerGesture();
       const { x, y } = clientToCanvas(el, e.clientX, e.clientY, st.canvasWidth, st.canvasHeight);
@@ -297,15 +312,59 @@ export function CanvasWorkspace() {
         };
       });
       setManyObjectPositions(updates);
+      if (drag.ids.length === 1) {
+        const cur = useLayoutEditorStore.getState();
+        const dragged = cur.document.objects.find((o) => o.id === drag.ids[0]);
+        if (dragged?.type === "chair" && !dragged.meta.locked) {
+          const p = findChairSlotSnapPreview(
+            dragged,
+            cur.document.objects,
+            new Set(drag.ids),
+          );
+          setChairSlotPreview(
+            p
+              ? {
+                  tableId: p.tableId,
+                  slotIndex: p.slotIndex,
+                  chairWidth: dragged.width,
+                  chairHeight: dragged.height,
+                }
+              : null,
+          );
+        } else {
+          setChairSlotPreview(null);
+        }
+      } else {
+        setChairSlotPreview(null);
+      }
     },
     [setManyObjectPositions],
   );
 
   const endDrag = useCallback(() => {
-    if (dragRef.current) {
-      useLayoutEditorStore.getState().endPointerGesture();
+    const drag = dragRef.current;
+    if (drag) {
+      const st = useLayoutEditorStore.getState();
+      if (drag.ids.length === 1) {
+        const chair = st.document.objects.find((o) => o.id === drag.ids[0]);
+        if (chair?.type === "chair" && !chair.meta.locked) {
+          const snapPos = findChairSlotSnapPosition(
+            chair,
+            st.document.objects,
+            new Set(drag.ids),
+          );
+          if (snapPos) {
+            st.updateObject(chair.id, {
+              x: Math.max(0, snapPos.x),
+              y: Math.max(0, snapPos.y),
+            });
+          }
+        }
+      }
+      st.endPointerGesture();
     }
     dragRef.current = null;
+    setChairSlotPreview(null);
   }, []);
 
   const onDragOver = (e: React.DragEvent) => {
@@ -381,62 +440,70 @@ export function CanvasWorkspace() {
 
   return (
     <div
-      className="relative min-h-0 flex-1 overflow-auto rounded-xl border border-border/80 bg-muted/30 p-4"
+      className="relative min-h-0 min-w-0 flex-1 overflow-auto rounded-xl border border-border/80 bg-muted/30 px-4 py-5 pb-20 pt-6 sm:px-8 sm:pb-24 sm:pt-8 [scrollbar-gutter:stable]"
       onPointerMove={onPointerMove}
       onPointerUp={endDrag}
       onPointerCancel={endDrag}
     >
-      <div
-        className="relative inline-block"
-        style={{
-          width: canvasWidth * zoom,
-          height: canvasHeight * zoom,
-        }}
-      >
+      {/*
+        w-max + min-w-full (and h-max + min-h-full) so scrollWidth/scrollHeight
+        include the full scaled canvas — w-full alone capped the scroll box to the viewport
+        and made the right/bottom edges unreachable without zooming out.
+      */}
+      <div className="flex h-max min-h-full w-max min-w-full items-center justify-center">
         <div
-          ref={canvasRef}
-          className={cn(
-            "relative rounded-lg border border-dashed border-border bg-[#faf7f0] shadow-inner",
-            showGrid &&
-              "bg-[length:20px_20px] bg-[linear-gradient(to_right,rgba(0,0,0,.04)_1px,transparent_1px),linear-gradient(to_bottom,rgba(0,0,0,.04)_1px,transparent_1px)]",
-          )}
+          className="relative shrink-0"
           style={{
-            width: canvasWidth,
-            height: canvasHeight,
-            transform: `scale(${zoom})`,
-            transformOrigin: "top left",
+            width: canvasWidth * zoom,
+            height: canvasHeight * zoom,
           }}
-          onPointerDown={onCanvasPointerDown}
-          onDragOver={onDragOver}
-          onDrop={onDrop}
-          role="application"
-          aria-label="Venue layout canvas"
         >
-          {objects.map((o) => (
-            <CanvasObjectView
-              key={o.id}
-              obj={o}
-              selected={selectedSet.has(o.id)}
-              onPointerDown={onPointerDownObject}
-              onResizePointerDown={onResizePointerDown}
-            />
-          ))}
-          {marqueeUI ? (
-            <div
-              className="pointer-events-none absolute inset-0 z-[5]"
-              aria-hidden
-            >
-              <div
-                className="absolute border-2 border-dashed border-[oklch(0.52_0.14_264)] bg-[oklch(0.62_0.1_264/0.18)] shadow-sm"
-                style={{
-                  left: Math.min(marqueeUI.sx, marqueeUI.cx),
-                  top: Math.min(marqueeUI.sy, marqueeUI.cy),
-                  width: Math.abs(marqueeUI.cx - marqueeUI.sx),
-                  height: Math.abs(marqueeUI.cy - marqueeUI.sy),
-                }}
+          <div
+            ref={canvasRef}
+            className={cn(
+              "relative rounded-lg border border-dashed border-border bg-[#faf7f0] shadow-inner",
+              showGrid &&
+                "bg-[length:20px_20px] bg-[linear-gradient(to_right,rgba(0,0,0,.04)_1px,transparent_1px),linear-gradient(to_bottom,rgba(0,0,0,.04)_1px,transparent_1px)]",
+            )}
+            style={{
+              width: canvasWidth,
+              height: canvasHeight,
+              transform: `scale(${zoom})`,
+              transformOrigin: "top left",
+            }}
+            onPointerDown={onCanvasPointerDown}
+            onDragOver={onDragOver}
+            onDrop={onDrop}
+            role="application"
+            aria-label="Venue layout canvas"
+          >
+            {objects.map((o) => (
+              <CanvasObjectView
+                key={o.id}
+                obj={o}
+                selected={selectedSet.has(o.id)}
+                chairSlotPreview={chairSlotPreview}
+                onPointerDown={onPointerDownObject}
+                onResizePointerDown={onResizePointerDown}
               />
-            </div>
-          ) : null}
+            ))}
+            {marqueeUI ? (
+              <div
+                className="pointer-events-none absolute inset-0 z-5"
+                aria-hidden
+              >
+                <div
+                  className="absolute border-2 border-dashed border-[oklch(0.52_0.14_264)] bg-[oklch(0.62_0.1_264/0.18)] shadow-sm"
+                  style={{
+                    left: Math.min(marqueeUI.sx, marqueeUI.cx),
+                    top: Math.min(marqueeUI.sy, marqueeUI.cy),
+                    width: Math.abs(marqueeUI.cx - marqueeUI.sx),
+                    height: Math.abs(marqueeUI.cy - marqueeUI.sy),
+                  }}
+                />
+              </div>
+            ) : null}
+          </div>
         </div>
       </div>
     </div>

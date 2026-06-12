@@ -1,9 +1,11 @@
-import type { CanvasObjectType } from "@/types/layout";
+import type { CanvasObjectType, VenueSetting } from "@/types/layout";
 
 export interface PaletteItem {
   type: CanvasObjectType;
   title: string;
   description?: string;
+  /** If set, item appears only when the layout’s venue setting matches. */
+  venues?: readonly VenueSetting[];
 }
 
 export const PALETTE_ITEMS: PaletteItem[] = [
@@ -29,5 +31,27 @@ export const PALETTE_ITEMS: PaletteItem[] = [
   { type: "lounge_sofa", title: "Lounge sofa" },
   { type: "plant_decor", title: "Plant / decor" },
   { type: "reserved_area", title: "Reserved area" },
+  {
+    type: "church_pew",
+    title: "Church pew",
+    description: "Nave bench — long and narrow; resize to match your rows.",
+    venues: ["church"],
+  },
+  {
+    type: "outdoor_tent",
+    title: "Outdoor tent",
+    description: "Sailcloth or frame tent footprint for lawn receptions.",
+    venues: ["outdoor_garden", "ballroom"],
+  },
+  {
+    type: "garden_arbor",
+    title: "Garden arbor",
+    description: "Pergola or wooden arbor for vows or photos.",
+    venues: ["outdoor_garden", "church"],
+  },
   { type: "text_label", title: "Text label" },
 ];
+
+export function paletteItemsForVenue(venue: VenueSetting): PaletteItem[] {
+  return PALETTE_ITEMS.filter((item) => !item.venues || item.venues.includes(venue));
+}

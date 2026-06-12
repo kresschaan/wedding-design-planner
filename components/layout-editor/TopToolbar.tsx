@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect } from "react";
 import { toast } from "sonner";
-import { ArrowLeft, Minus, Plus, Save, Sparkles } from "lucide-react";
+import { ArrowLeft, Box, LayoutGrid, Minus, Plus, Save, Sparkles } from "lucide-react";
 import { useLayoutEditorStore } from "@/stores/layout-editor-store";
 import { createClient } from "@/lib/supabase/client";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -16,6 +16,7 @@ import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
@@ -24,6 +25,8 @@ import {
   LAYOUT_AUTO_SAVE_INTERVAL_MINUTES,
   LAYOUT_AUTO_SAVE_INTERVAL_MS,
 } from "@/lib/layout-auto-save";
+import { VENUE_PRESET_LABELS, parseVenueSetting } from "@/lib/venue-settings";
+import { VENUE_SETTINGS } from "@/types/layout";
 
 export function TopToolbar() {
   const router = useRouter();
@@ -43,6 +46,10 @@ export function TopToolbar() {
   const setCanvasSize = useLayoutEditorStore((s) => s.setCanvasSize);
   const venueName = useLayoutEditorStore((s) => s.venueName);
   const location = useLayoutEditorStore((s) => s.location);
+  const venueSetting = useLayoutEditorStore((s) => s.venueSetting);
+  const persistVenueSettingToDb = useLayoutEditorStore((s) => s.persistVenueSettingToDb);
+  const editorDisplayMode = useLayoutEditorStore((s) => s.editorDisplayMode);
+  const setEditorDisplayMode = useLayoutEditorStore((s) => s.setEditorDisplayMode);
 
   const markSaved = useLayoutEditorStore((s) => s.markSaved);
   const setSaving = useLayoutEditorStore((s) => s.setSaving);
@@ -59,7 +66,7 @@ export function TopToolbar() {
       setSaving(true);
       setError(null);
       const supabase = createClient();
-      const payload = {
+      const payload: Record<string, unknown> = {
         name: s.name,
         venue_name: s.venueName,
         location: s.location,
@@ -67,6 +74,9 @@ export function TopToolbar() {
         canvas_height: s.canvasHeight,
         layout_json: s.document,
       };
+      if (s.persistVenueSettingToDb) {
+        payload.venue_setting = s.venueSetting;
+      }
       const { data, error } = await supabase
         .from("layouts")
         .update(payload)
@@ -135,6 +145,23 @@ export function TopToolbar() {
           <span>
             {venueName} · {location}
           </span>
+          <label className="sr-only" htmlFor="toolbar-venue-setting">
+            Venue setting
+          </label>
+          {persistVenueSettingToDb ? (
+            <select
+              id="toolbar-venue-setting"
+              className="h-8 max-w-[11rem] rounded-md border border-border bg-background px-2 text-xs text-foreground shadow-sm"
+              value={venueSetting}
+              onChange={(e) => setMeta({ venueSetting: parseVenueSetting(e.target.value) })}
+            >
+              {VENUE_SETTINGS.map((v) => (
+                <option key={v} value={v}>
+                  {VENUE_PRESET_LABELS[v].title}
+                </option>
+              ))}
+            </select>
+          ) : null}
           {dirty ? (
             <Badge variant="secondary" className="gap-1">
               <Sparkles className="size-3" aria-hidden />
@@ -151,7 +178,41 @@ export function TopToolbar() {
         </div>
       </div>
       <div className="flex flex-wrap items-center gap-2">
-        <div className="flex items-center rounded-md border border-border bg-background">
+        <div
+          className="flex items-center rounded-md border border-border bg-background p-0.5"
+          role="group"
+          aria-label="Editor view"
+        >
+          <Button
+            type="button"
+            variant={editorDisplayMode === "floor_plan" ? "secondary" : "ghost"}
+            size="sm"
+            className="h-8 gap-1.5 rounded-sm px-2.5 shadow-none"
+            onClick={() => setEditorDisplayMode("floor_plan")}
+            aria-pressed={editorDisplayMode === "floor_plan"}
+          >
+            <LayoutGrid className="size-4 shrink-0" aria-hidden />
+            <span className="hidden sm:inline">Floor plan</span>
+          </Button>
+          <Button
+            type="button"
+            variant={editorDisplayMode === "ballroom_3d" ? "secondary" : "ghost"}
+            size="sm"
+            className="h-8 gap-1.5 rounded-sm px-2.5 shadow-none"
+            onClick={() => setEditorDisplayMode("ballroom_3d")}
+            aria-pressed={editorDisplayMode === "ballroom_3d"}
+          >
+            <Box className="size-4 shrink-0" aria-hidden />
+            <span className="hidden sm:inline">3D ballroom</span>
+          </Button>
+        </div>
+        <div
+          className={cn(
+            "flex items-center rounded-md border border-border bg-background",
+            editorDisplayMode !== "floor_plan" && "pointer-events-none opacity-45",
+          )}
+          title={editorDisplayMode !== "floor_plan" ? "Canvas zoom applies in floor plan view" : undefined}
+        >
           <Button
             type="button"
             variant="ghost"
@@ -177,7 +238,10 @@ export function TopToolbar() {
           </Button>
         </div>
         <div
-          className="hidden items-center gap-1.5 sm:flex"
+          className={cn(
+            "hidden items-center gap-1.5 sm:flex",
+            editorDisplayMode !== "floor_plan" && "pointer-events-none opacity-45",
+          )}
           title="Canvas page size in pixels (400–5600). Same as Canvas → Dimensions."
         >
           <span className="text-xs font-medium text-muted-foreground">Page</span>
@@ -192,6 +256,7 @@ export function TopToolbar() {
             step={20}
             className="h-8 w-[4.25rem] px-2 text-xs tabular-nums"
             value={canvasWidth}
+            disabled={editorDisplayMode !== "floor_plan"}
             onChange={(e) =>
               setCanvasSize(Number(e.target.value) || canvasWidth, canvasHeight)
             }
@@ -208,6 +273,7 @@ export function TopToolbar() {
             step={20}
             className="h-8 w-[4.25rem] px-2 text-xs tabular-nums"
             value={canvasHeight}
+            disabled={editorDisplayMode !== "floor_plan"}
             onChange={(e) =>
               setCanvasSize(canvasWidth, Number(e.target.value) || canvasHeight)
             }
@@ -221,20 +287,21 @@ export function TopToolbar() {
             Canvas
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-56">
-            <DropdownMenuLabel>Workspace</DropdownMenuLabel>
-            <DropdownMenuSeparator />
-            <DropdownMenuCheckboxItem
-              checked={showGrid}
-              onCheckedChange={(v) => useLayoutEditorStore.setState({ showGrid: v })}
-            >
-              Show grid
-            </DropdownMenuCheckboxItem>
-            <DropdownMenuCheckboxItem
-              checked={snapToGrid}
-              onCheckedChange={(v) => useLayoutEditorStore.setState({ snapToGrid: v })}
-            >
-              Snap to grid
-            </DropdownMenuCheckboxItem>
+            <DropdownMenuGroup>
+              <DropdownMenuLabel>Workspace</DropdownMenuLabel>
+              <DropdownMenuCheckboxItem
+                checked={showGrid}
+                onCheckedChange={(v) => useLayoutEditorStore.setState({ showGrid: v })}
+              >
+                Show grid
+              </DropdownMenuCheckboxItem>
+              <DropdownMenuCheckboxItem
+                checked={snapToGrid}
+                onCheckedChange={(v) => useLayoutEditorStore.setState({ snapToGrid: v })}
+              >
+                Snap to grid
+              </DropdownMenuCheckboxItem>
+            </DropdownMenuGroup>
             <DropdownMenuSeparator />
             <p className="px-2 pb-1 text-xs text-muted-foreground">
               Drag on empty canvas to draw a selection box (Shift adds). Multi-select: ⌘/Ctrl+click.
