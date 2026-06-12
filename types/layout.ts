@@ -1,3 +1,6 @@
+export const VENUE_SETTINGS = ["ballroom", "church", "outdoor_garden"] as const;
+export type VenueSetting = (typeof VENUE_SETTINGS)[number];
+
 export const CANVAS_OBJECT_TYPES = [
   "round_table",
   "rectangular_table",
@@ -21,6 +24,9 @@ export const CANVAS_OBJECT_TYPES = [
   "lounge_sofa",
   "plant_decor",
   "reserved_area",
+  "church_pew",
+  "outdoor_tent",
+  "garden_arbor",
   "text_label",
 ] as const;
 
@@ -59,6 +65,12 @@ export interface CanvasObjectMeta {
   /** Single guest for one-seat assets (e.g. chair). */
   guestName?: string;
   notes?: string;
+  /** Objects with the same id move together when any member is dragged. */
+  groupId?: string;
+  /** When true, the object cannot be dragged or resized on the canvas. */
+  locked?: boolean;
+  /** Chairs auto-placed by “Ring chairs” belong to this table id (for replace on re-run). */
+  chairRingForTableId?: string;
 }
 
 export interface CanvasObject {
@@ -85,6 +97,7 @@ export interface LayoutRow {
   name: string;
   venue_name: string;
   location: string;
+  venue_setting: VenueSetting;
   canvas_width: number;
   canvas_height: number;
   layout_json: LayoutJsonDocument;

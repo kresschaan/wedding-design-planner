@@ -5,6 +5,7 @@ import { useTransition } from "react";
 import Link from "next/link";
 import { toast } from "sonner";
 import { duplicateLayoutAction, deleteLayoutAction } from "@/app/dashboard/actions";
+import { VENUE_PRESET_LABELS, parseVenueSetting } from "@/lib/venue-settings";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -33,6 +34,8 @@ export interface DashboardLayout {
   name: string;
   venue_name: string;
   location: string;
+  /** Present after DB migration `20250529130000_layout_venue_setting.sql` */
+  venue_setting?: string;
   updated_at: string;
 }
 
@@ -99,8 +102,15 @@ export function LayoutGrid({ layouts }: LayoutGridProps) {
                     Saved
                   </Badge>
                 </div>
-                <CardDescription className="line-clamp-2">
-                  {layout.venue_name} · {layout.location}
+                <CardDescription className="flex flex-col gap-1.5 line-clamp-2">
+                  <span>
+                    {layout.venue_name} · {layout.location}
+                  </span>
+                  {layout.venue_setting ? (
+                    <Badge variant="outline" className="w-fit text-[10px] font-normal tracking-wide">
+                      {VENUE_PRESET_LABELS[parseVenueSetting(layout.venue_setting)].title}
+                    </Badge>
+                  ) : null}
                 </CardDescription>
               </CardHeader>
               <CardContent className="text-xs text-muted-foreground">Last updated {updated}</CardContent>

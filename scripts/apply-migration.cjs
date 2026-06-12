@@ -1,5 +1,5 @@
 /**
- * Applies supabase/migrations/20250527000000_init.sql to your remote Postgres.
+ * Applies all `*.sql` files in `supabase/migrations/` in lexical order via psql.
  *
  * Requires DATABASE_URL in .env.local (from Supabase Dashboard → Connect).
  * Prefer **Session pooler** URI if direct `db.*` fails (IPv6).
@@ -17,12 +17,7 @@ require("dotenv").config({ path: path.join(__dirname, "..", ".env.local") });
 require("dotenv").config({ path: path.join(__dirname, "..", ".env") });
 
 const root = path.join(__dirname, "..");
-const sqlFile = path.join(
-  root,
-  "supabase",
-  "migrations",
-  "20250527000000_init.sql",
-);
+const migrationsDir = path.join(root, "supabase", "migrations");
 
 const dbUrl = (process.env.DATABASE_URL || "").trim();
 
@@ -36,7 +31,9 @@ Read the PostgreSQL error above.
 
 • "no route to host" / IPv6 / DNS → use Session pooler DATABASE_URL (see README).
 
-• Install psql:  brew install libpq && brew link --force libpq
+• Install psql:  macOS \`brew install libpq && brew link --force libpq\`, or paste SQL into Dashboard → SQL Editor.
+
+• New columns (e.g. venue_setting): run migrations after pulling; older app versions ignore unknown fields until you deploy.
 ──────────────────────────────────────────────────────────────────────
 `);
 }
@@ -67,8 +64,19 @@ Then run:  npm run db:apply
   process.exit(1);
 }
 
-if (!fs.existsSync(sqlFile)) {
-  console.error("Migration file not found:", sqlFile);
+if (!fs.existsSync(migrationsDir)) {
+  console.error("Migrations directory not found:", migrationsDir);
+  process.exit(1);
+}
+
+const sqlFiles = fs
+  .readdirSync(migrationsDir)
+  .filter((f) => f.endsWith(".sql"))
+  .sort()
+  .map((f) => path.join(migrationsDir, f));
+
+if (sqlFiles.length === 0) {
+  console.error("No .sql files in", migrationsDir);
   process.exit(1);
 }
 
@@ -83,19 +91,21 @@ if (
 }
 
 if (psqlAvailable()) {
-  console.info("Applying migration via psql (supports multi-statement SQL files)…");
-  console.info(sqlFile);
-  const psql = spawnSync("psql", [dbUrl, "-v", "ON_ERROR_STOP=1", "-f", sqlFile], {
-    stdio: "inherit",
-    cwd: root,
-    env: process.env,
-  });
-  if (psql.status === 0) {
-    console.info("\nDone. Check Table Editor for layouts + profiles.");
-    process.exit(0);
+  console.info("Applying migrations via psql (supports multi-statement SQL files)…");
+  for (const sqlFile of sqlFiles) {
+    console.info("→", path.basename(sqlFile));
+    const psql = spawnSync("psql", [dbUrl, "-v", "ON_ERROR_STOP=1", "-f", sqlFile], {
+      stdio: "inherit",
+      cwd: root,
+      env: process.env,
+    });
+    if (psql.status !== 0) {
+      printFailureHelp();
+      process.exit(psql.status === null ? 1 : psql.status);
+    }
   }
-  printFailureHelp();
-  process.exit(psql.status === null ? 1 : psql.status);
+  console.info("\nDone. Applied", sqlFiles.length, "file(s). Check Table Editor for layouts + profiles.");
+  process.exit(0);
 }
 
 console.warn(
@@ -103,20 +113,15 @@ console.warn(
     "Install psql: macOS `brew install libpq` then `brew link --force libpq`, or use SQL Editor.\n",
 );
 
-console.info("Applying migration via Supabase CLI:", sqlFile);
-
-const supabaseCli = spawnSync(
-  process.platform === "win32" ? "npx.cmd" : "npx",
-  ["--yes", "supabase@2.101.0", "db", "query", "--db-url", dbUrl, "-f", sqlFile],
-  { stdio: "inherit", cwd: root, env: process.env, shell: process.platform === "win32" },
-);
-
-if (supabaseCli.status === 0) {
-  console.info("Done. Check Table Editor for layouts + profiles.");
-  process.exit(0);
-}
-
-console.error(`
+for (const sqlFile of sqlFiles) {
+  console.info("→", path.basename(sqlFile));
+  const supabaseCli = spawnSync(
+    process.platform === "win32" ? "npx.cmd" : "npx",
+    ["--yes", "supabase@2.101.0", "db", "query", "--db-url", dbUrl, "-f", sqlFile],
+    { stdio: "inherit", cwd: root, env: process.env, shell: process.platform === "win32" },
+  );
+  if (supabaseCli.status !== 0) {
+    console.error(`
 Supabase CLI error: multi-statement .sql files are not supported by "supabase db query -f"
 (PostgreSQL: "cannot insert multiple commands into a prepared statement").
 
@@ -124,7 +129,12 @@ Install psql and run again:
   brew install libpq && brew link --force libpq
   npm run db:apply
 
-Or paste the migration into Dashboard → SQL Editor → Run.
+Or paste each migration into Dashboard → SQL Editor → Run.
 `);
-printFailureHelp();
-process.exit(supabaseCli.status === null ? 1 : supabaseCli.status);
+    printFailureHelp();
+    process.exit(supabaseCli.status === null ? 1 : supabaseCli.status);
+  }
+}
+
+console.info("Done. Applied", sqlFiles.length, "file(s).");
+process.exit(0);

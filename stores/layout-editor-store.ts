@@ -1,11 +1,13 @@
 "use client";
 
 import { create } from "zustand";
-import type {
-  CanvasObject,
-  CanvasObjectType,
-  LayoutJsonDocument,
-  LayoutRow,
+import {
+  type CanvasObject,
+  type CanvasObjectType,
+  type LayoutJsonDocument,
+  type LayoutRow,
+  type VenueSetting,
+  isTableLikeType,
 } from "@/types/layout";
 import {
   DEFAULT_CANVAS_HEIGHT,
@@ -14,8 +16,10 @@ import {
   emptyLayoutDocument,
 } from "@/lib/sample-layout";
 import { parseLayoutJson } from "@/lib/layout-json";
+import { parseVenueSetting } from "@/lib/venue-settings";
 import { reconcileCanvasWithObjects } from "@/lib/canvas-auto-expand";
 import { parseLayoutClipboard, serializeLayoutClipboard } from "@/lib/layout-clipboard";
+import { computeChairRingPositions } from "@/lib/chair-ring-layout";
 
 const GRID = 20;
 const MAX_UNDO = 50;
@@ -44,11 +48,20 @@ function filterSelectionToExisting(selectedIds: string[], objects: CanvasObject[
   return selectedIds.filter((id) => ids.has(id));
 }
 
+/** 2D editor vs. Three.js ballroom walk-through preview. */
+export type EditorDisplayMode = "floor_plan" | "ballroom_3d";
+export type BallroomCameraPreset = "overview" | "entrance" | "top";
+/** Orbit = drag-to-rotate; walk = first-person pointer-lock walkthrough. */
+export type BallroomNavMode = "orbit" | "walk";
+
 export interface LayoutEditorState {
   layoutId: string;
   name: string;
   venueName: string;
   location: string;
+  venueSetting: VenueSetting;
+  /** When false, API updates omit `venue_setting` until the DB migration is applied. */
+  persistVenueSettingToDb: boolean;
   canvasWidth: number;
   canvasHeight: number;
   document: LayoutJsonDocument;
@@ -58,6 +71,14 @@ export interface LayoutEditorState {
   zoom: number;
   showGrid: boolean;
   snapToGrid: boolean;
+  editorDisplayMode: EditorDisplayMode;
+  ballroomCameraPreset: BallroomCameraPreset;
+  ballroomShowWalls: boolean;
+  ballroomShowChandeliers: boolean;
+  ballroomShowFloorZones: boolean;
+  ballroomNavMode: BallroomNavMode;
+  ballroomShowPerson: boolean;
+  ballroomAutoChairs: boolean;
   dirty: boolean;
   isSaving: boolean;
   lastError: string | null;
@@ -66,7 +87,12 @@ export interface LayoutEditorState {
   hydrateFromRow: (row: LayoutRow) => void;
   resetEmpty: (id: string) => void;
   setMeta: (
-    patch: Partial<{ name: string; venueName: string; location: string }>,
+    patch: Partial<{
+      name: string;
+      venueName: string;
+      location: string;
+      venueSetting: VenueSetting;
+    }>,
   ) => void;
   setCanvasSize: (w: number, h: number) => void;
   /** Replace selection with these ids (dedupe, preserve order). */
@@ -91,12 +117,31 @@ export interface LayoutEditorState {
   deleteObjects: (ids: string[]) => void;
   deleteSelection: () => void;
   duplicateSelection: () => void;
+  /** Assign one shared group id to the current selection (needs ≥2 objects). */
+  groupSelection: () => void;
+  /** Clear group id on selected objects (does not delete chairs from a ring). */
+  ungroupSelection: () => void;
+  /** Replace auto-placed chairs for this table and arrange them in a ring. */
+  placeChairRingAroundTable: (
+    tableId: string,
+    count: number,
+    options?: { includeTableInGroup?: boolean },
+  ) => void;
+  setSelectionLocked: (locked: boolean) => void;
   setObjectPosition: (id: string, x: number, y: number) => void;
   setManyObjectPositions: (updates: { id: string; x: number; y: number }[]) => void;
   reconcileCanvas: () => void;
   setZoom: (z: number) => void;
   toggleGrid: () => void;
   toggleSnap: () => void;
+  setEditorDisplayMode: (mode: EditorDisplayMode) => void;
+  setBallroomCameraPreset: (preset: BallroomCameraPreset) => void;
+  setBallroomShowWalls: (show: boolean) => void;
+  setBallroomShowChandeliers: (show: boolean) => void;
+  setBallroomShowFloorZones: (show: boolean) => void;
+  setBallroomNavMode: (mode: BallroomNavMode) => void;
+  setBallroomShowPerson: (show: boolean) => void;
+  setBallroomAutoChairs: (show: boolean) => void;
   markSaved: (updatedAt: string) => void;
   markDirty: () => void;
   setSaving: (v: boolean) => void;
@@ -113,6 +158,8 @@ export const useLayoutEditorStore = create<LayoutEditorState>((set, get) => ({
   name: "Untitled layout",
   venueName: "Garden estate venue",
   location: "Philippines",
+  venueSetting: "ballroom",
+  persistVenueSettingToDb: true,
   canvasWidth: DEFAULT_CANVAS_WIDTH,
   canvasHeight: DEFAULT_CANVAS_HEIGHT,
   document: emptyLayoutDocument(),
@@ -122,6 +169,14 @@ export const useLayoutEditorStore = create<LayoutEditorState>((set, get) => ({
   zoom: 1,
   showGrid: true,
   snapToGrid: true,
+  editorDisplayMode: "floor_plan",
+  ballroomCameraPreset: "overview",
+  ballroomShowWalls: true,
+  ballroomShowChandeliers: true,
+  ballroomShowFloorZones: true,
+  ballroomNavMode: "orbit",
+  ballroomShowPerson: true,
+  ballroomAutoChairs: true,
   dirty: false,
   isSaving: false,
   lastError: null,
@@ -134,6 +189,7 @@ export const useLayoutEditorStore = create<LayoutEditorState>((set, get) => ({
       name: row.name,
       venueName: row.venue_name,
       location: row.location,
+      venueSetting: parseVenueSetting(row.venue_setting),
       canvasWidth: row.canvas_width,
       canvasHeight: row.canvas_height,
       document: doc,
@@ -143,6 +199,7 @@ export const useLayoutEditorStore = create<LayoutEditorState>((set, get) => ({
       dirty: false,
       lastSavedAt: row.updated_at,
       lastError: null,
+      editorDisplayMode: "floor_plan",
     });
     queueMicrotask(() => {
       get().reconcileCanvas();
@@ -150,11 +207,13 @@ export const useLayoutEditorStore = create<LayoutEditorState>((set, get) => ({
   },
 
   resetEmpty: (id) => {
-    set({
+    set((s) => ({
       layoutId: id,
       name: "Untitled layout",
       venueName: "Garden estate venue",
       location: "Philippines",
+      venueSetting: "ballroom",
+      persistVenueSettingToDb: s.persistVenueSettingToDb,
       canvasWidth: DEFAULT_CANVAS_WIDTH,
       canvasHeight: DEFAULT_CANVAS_HEIGHT,
       document: emptyLayoutDocument(),
@@ -164,7 +223,8 @@ export const useLayoutEditorStore = create<LayoutEditorState>((set, get) => ({
       dirty: true,
       lastSavedAt: null,
       lastError: null,
-    });
+      editorDisplayMode: "floor_plan",
+    }));
   },
 
   setMeta: (patch) => {
@@ -403,18 +463,38 @@ export const useLayoutEditorStore = create<LayoutEditorState>((set, get) => ({
     if (toCopy.length === 0) return;
     get().pushUndoSnapshot();
     const stagger = 24;
+    const oldToNewId = new Map<string, string>();
+    for (const o of toCopy) {
+      oldToNewId.set(o.id, crypto.randomUUID());
+    }
+    const oldGroupToNew = new Map<string, string>();
+    for (const o of toCopy) {
+      const g = o.meta.groupId;
+      if (g && !oldGroupToNew.has(g)) {
+        oldGroupToNew.set(g, crypto.randomUUID());
+      }
+    }
     const additions: CanvasObject[] = [];
     const newIds: string[] = [];
     let i = 0;
     for (const o of toCopy) {
-      const nid = crypto.randomUUID();
+      const nid = oldToNewId.get(o.id)!;
       newIds.push(nid);
+      const oldRing = o.meta.chairRingForTableId;
+      const newRing =
+        oldRing && oldToNewId.has(oldRing) ? oldToNewId.get(oldRing)! : undefined;
+      const newGroup = o.meta.groupId ? oldGroupToNew.get(o.meta.groupId)! : undefined;
       additions.push({
         ...o,
         id: nid,
         x: o.x + stagger * (i + 1),
         y: o.y + stagger * (i + 1),
         label: o.label ? `${o.label} (copy)` : o.label,
+        meta: {
+          ...o.meta,
+          groupId: newGroup,
+          chairRingForTableId: newRing,
+        },
       });
       i++;
     }
@@ -424,6 +504,105 @@ export const useLayoutEditorStore = create<LayoutEditorState>((set, get) => ({
       dirty: true,
     }));
     get().reconcileCanvas();
+  },
+
+  groupSelection: () => {
+    const s = get();
+    if (s.selectedIds.length < 2) return;
+    get().pushUndoSnapshot();
+    const gid = crypto.randomUUID();
+    const sel = new Set(s.selectedIds);
+    set((st) => ({
+      document: {
+        version: 1,
+        objects: st.document.objects.map((o) =>
+          sel.has(o.id) ? { ...o, meta: { ...o.meta, groupId: gid } } : o,
+        ),
+      },
+      dirty: true,
+    }));
+  },
+
+  ungroupSelection: () => {
+    const s = get();
+    if (s.selectedIds.length === 0) return;
+    get().pushUndoSnapshot();
+    const sel = new Set(s.selectedIds);
+    set((st) => ({
+      document: {
+        version: 1,
+        objects: st.document.objects.map((o) =>
+          sel.has(o.id) ? { ...o, meta: { ...o.meta, groupId: undefined } } : o,
+        ),
+      },
+      dirty: true,
+    }));
+  },
+
+  placeChairRingAroundTable: (tableId, count, options) => {
+    const s = get();
+    const table = s.document.objects.find((o) => o.id === tableId && isTableLikeType(o.type));
+    if (!table) return;
+    const n = Math.min(24, Math.max(1, Math.round(count)));
+    get().pushUndoSnapshot();
+    const chairBase = defaultObjectForType("chair");
+    const positions = computeChairRingPositions(table, n, chairBase.width, chairBase.height);
+    const { snapToGrid } = get();
+    const groupId = crypto.randomUUID();
+
+    const withoutOldRing = s.document.objects.filter(
+      (o) => !(o.type === "chair" && o.meta.chairRingForTableId === tableId),
+    );
+
+    const nextObjects = withoutOldRing.map((o) => {
+      if (o.id !== tableId) return o;
+      const meta = { ...o.meta, seatCount: n };
+      if (options?.includeTableInGroup) {
+        meta.groupId = groupId;
+      }
+      return { ...o, meta };
+    });
+
+    const newChairs: CanvasObject[] = positions.map((p) => ({
+      id: crypto.randomUUID(),
+      type: "chair" as const,
+      x: snap(p.x, snapToGrid),
+      y: snap(p.y, snapToGrid),
+      width: chairBase.width,
+      height: chairBase.height,
+      rotation: 0,
+      label: chairBase.label,
+      color: table.color || chairBase.color,
+      meta: {
+        ...chairBase.meta,
+        groupId,
+        chairRingForTableId: tableId,
+      },
+    }));
+
+    const chairIds = newChairs.map((c) => c.id);
+    set({
+      document: { version: 1, objects: [...nextObjects, ...newChairs] },
+      selectedIds: options?.includeTableInGroup ? [tableId, ...chairIds] : chairIds,
+      dirty: true,
+    });
+    get().reconcileCanvas();
+  },
+
+  setSelectionLocked: (locked) => {
+    const ids = get().selectedIds;
+    if (ids.length === 0) return;
+    get().pushUndoSnapshot();
+    const sel = new Set(ids);
+    set((st) => ({
+      document: {
+        version: 1,
+        objects: st.document.objects.map((o) =>
+          sel.has(o.id) ? { ...o, meta: { ...o.meta, locked } } : o,
+        ),
+      },
+      dirty: true,
+    }));
   },
 
   setObjectPosition: (id, x, y) => {
@@ -478,6 +657,15 @@ export const useLayoutEditorStore = create<LayoutEditorState>((set, get) => ({
   setZoom: (z) => set({ zoom: Math.min(1.6, Math.max(0.45, Math.round(z * 10) / 10)) }),
   toggleGrid: () => set((s) => ({ showGrid: !s.showGrid })),
   toggleSnap: () => set((s) => ({ snapToGrid: !s.snapToGrid })),
+
+  setEditorDisplayMode: (mode) => set({ editorDisplayMode: mode }),
+  setBallroomCameraPreset: (preset) => set({ ballroomCameraPreset: preset }),
+  setBallroomShowWalls: (show) => set({ ballroomShowWalls: show }),
+  setBallroomShowChandeliers: (show) => set({ ballroomShowChandeliers: show }),
+  setBallroomShowFloorZones: (show) => set({ ballroomShowFloorZones: show }),
+  setBallroomNavMode: (mode) => set({ ballroomNavMode: mode }),
+  setBallroomShowPerson: (show) => set({ ballroomShowPerson: show }),
+  setBallroomAutoChairs: (show) => set({ ballroomAutoChairs: show }),
 
   markSaved: (updatedAt) =>
     set({ dirty: false, lastSavedAt: updatedAt, lastError: null }),

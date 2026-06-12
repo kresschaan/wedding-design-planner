@@ -209,6 +209,28 @@ export function PaletteMiniThumb({ type }: { type: CanvasObjectType }) {
           aria-hidden
         />
       );
+    case "church_pew":
+      return (
+        <div className={cn(frame, "rounded-md bg-gradient-to-b from-amber-100 to-amber-600")} aria-hidden>
+          <div className="h-2 w-8 rounded-sm border border-[#422006]/50 bg-amber-200/80" />
+        </div>
+      );
+    case "outdoor_tent":
+      return (
+        <div className={cn(frame, "rounded-xl bg-[repeating-linear-gradient(118deg,#fffbeb_0px,#fffbeb_6px,#fde68a_6px,#fde68a_12px)]")} aria-hidden>
+          <div className="mt-1 h-2 w-6 self-start bg-amber-100" style={{ clipPath: "polygon(50% 0%, 100% 100%, 0% 100%)" }} />
+        </div>
+      );
+    case "garden_arbor":
+      return (
+        <div className={cn(frame, "rounded-lg bg-gradient-to-b from-lime-100 to-emerald-300")} aria-hidden>
+          <svg viewBox="0 0 32 24" className="size-8">
+            <path d="M4 18 Q16 4 28 18" fill="none" stroke="#166534" strokeWidth="2" />
+            <rect x="6" y="16" width="3" height="6" fill="#365314" />
+            <rect x="23" y="16" width="3" height="6" fill="#365314" />
+          </svg>
+        </div>
+      );
     case "text_label":
       return (
         <div className={cn(frame, "rounded-lg bg-gradient-to-r from-sky-100 to-indigo-100")} aria-hidden>

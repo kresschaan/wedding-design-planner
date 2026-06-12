@@ -1,9 +1,11 @@
 "use client";
 
+import { Lock } from "lucide-react";
 import type { CanvasObject as CanvasObjectModel } from "@/types/layout";
 import { isTableLikeType } from "@/types/layout";
 import { cn } from "@/lib/utils";
 import type { ResizeEdge } from "@/lib/canvas-resize";
+import { TableChairSlotMarkers } from "./table-chair-slot-markers";
 
 function humanizeType(type: string): string {
   return type
@@ -26,10 +28,15 @@ function ObjectCaption({ obj }: { obj: CanvasObjectModel }) {
 
   return (
     <div
-      className="pointer-events-none absolute left-1/2 top-full z-10 mt-3 flex max-w-[min(20rem,calc(100vw-2rem))] -translate-x-1/2 flex-col items-center gap-1.5 px-2 text-center"
+      className="pointer-events-none absolute left-1/2 top-full z-10 mt-3 flex max-w-[min(20rem,calc(100vw-2rem))] -translate-x-1/2 flex-col items-center gap-1.5 px-2 text-center break-words hyphens-auto"
       style={{ maxWidth: maxW }}
     >
-      <span className="text-base leading-snug font-semibold tracking-tight text-[#0f172a] [text-shadow:0_1px_0_rgba(255,255,255,0.95)]">
+      <span
+        className={cn(
+          "text-base leading-snug font-semibold tracking-tight text-[#0f172a] [text-shadow:0_1px_0_rgba(255,255,255,0.95)]",
+          title.split(/\s+/).length <= 2 && title.length <= 22 && "whitespace-nowrap",
+        )}
+      >
         {title}
       </span>
       {subtitle ? (
@@ -39,11 +46,36 @@ function ObjectCaption({ obj }: { obj: CanvasObjectModel }) {
   );
 }
 
+export type ChairSlotPreview = {
+  tableId: string;
+  slotIndex: number;
+  chairWidth: number;
+  chairHeight: number;
+};
+
+/** Renders outside the clipped table frame so ring slots (beyond the bbox) stay visible. */
+function tableChairSlotOverlay(
+  table: CanvasObjectModel,
+  slotHighlight: number | null,
+  chairSlotPreview: ChairSlotPreview | null,
+) {
+  return (
+    <TableChairSlotMarkers
+      table={table}
+      highlightIndex={slotHighlight}
+      chairWidth={chairSlotPreview?.chairWidth}
+      chairHeight={chairSlotPreview?.chairHeight}
+    />
+  );
+}
+
 interface CanvasObjectProps {
   obj: CanvasObjectModel;
   selected: boolean;
   onPointerDown: (e: React.PointerEvent, id: string) => void;
   onResizePointerDown?: (e: React.PointerEvent, id: string, edge: ResizeEdge) => void;
+  /** While dragging a chair, highlights the nearest free seat slot on this table (if id matches). */
+  chairSlotPreview?: ChairSlotPreview | null;
 }
 
 const RESIZE_EDGES: { edge: ResizeEdge; className: string; cursor: string }[] = [
@@ -273,13 +305,22 @@ export function CanvasObjectView({
   selected,
   onPointerDown,
   onResizePointerDown,
+  chairSlotPreview = null,
 }: CanvasObjectProps) {
+  const slotHighlight =
+    chairSlotPreview && chairSlotPreview.tableId === obj.id ? chairSlotPreview.slotIndex : null;
+
   const wrap = (
     inner: React.ReactNode,
     aria: string,
     className?: string,
     extraStyle?: React.CSSProperties,
-    opts?: { useColorFill?: boolean; noExternalCaption?: boolean },
+    opts?: {
+      useColorFill?: boolean;
+      noExternalCaption?: boolean;
+      /** Drawn above the frame; use for overlays that extend past `overflow-hidden` (e.g. chair rings). */
+      slotOverlay?: React.ReactNode;
+    },
   ) => {
     const useFill = opts?.useColorFill !== false;
     const showCaption = !opts?.noExternalCaption;
@@ -297,18 +338,38 @@ export function CanvasObjectView({
     };
     return (
       <div
-        className={cn("absolute touch-none select-none overflow-visible", selected && selectedRing)}
+        className={cn(
+          "absolute touch-none select-none overflow-visible",
+          selected && selectedRing,
+          obj.meta.locked && "opacity-[0.97]",
+        )}
         style={shell}
+        title={
+          obj.meta.locked
+            ? "Position locked — choose Unlock in the Properties panel to move or resize."
+            : undefined
+        }
         onPointerDown={(e) => onPointerDown(e, obj.id)}
         role="button"
         tabIndex={0}
-        aria-label={aria}
+        aria-label={obj.meta.locked ? `${aria} (locked)` : aria}
       >
         <div className={cn(cartoonFrame, "relative h-full w-full", className)} style={innerFill}>
           {inner}
         </div>
+        {opts?.slotOverlay ? (
+          <div className="pointer-events-none absolute inset-0 z-20 overflow-visible">{opts.slotOverlay}</div>
+        ) : null}
+        {obj.meta.locked ? (
+          <div
+            className="pointer-events-none absolute -right-1 -top-1 z-20 flex h-8 w-8 items-center justify-center rounded-full border-2 border-amber-900 bg-gradient-to-b from-amber-100 to-amber-300 text-amber-950 shadow-md ring-2 ring-white/90"
+            aria-hidden
+          >
+            <Lock className="h-4 w-4" strokeWidth={2.4} />
+          </div>
+        ) : null}
         {showCaption ? <ObjectCaption obj={obj} /> : null}
-        {selected && onResizePointerDown ? (
+        {selected && onResizePointerDown && !obj.meta.locked ? (
           <ObjectResizeHandles
             onPointerDown={(e, edge) => {
               e.stopPropagation();
@@ -336,6 +397,8 @@ export function CanvasObjectView({
         </>,
         `Round table ${obj.label}`,
         "rounded-full",
+        undefined,
+        { slotOverlay: tableChairSlotOverlay(obj, slotHighlight, chairSlotPreview) },
       );
 
     case "sweetheart_table":
@@ -348,9 +411,19 @@ export function CanvasObjectView({
         </>,
         `Sweetheart table ${obj.label}`,
         "rounded-2xl rounded-t-[48px]",
+        undefined,
+        { slotOverlay: tableChairSlotOverlay(obj, slotHighlight, chairSlotPreview) },
       );
 
     case "rectangular_table":
+      return wrap(
+        <></>,
+        `Rectangular table ${obj.label}`,
+        "rounded-2xl",
+        undefined,
+        { slotOverlay: tableChairSlotOverlay(obj, slotHighlight, chairSlotPreview) },
+      );
+
     case "buffet_table":
     case "dessert_table":
     case "registration_table":
@@ -374,6 +447,8 @@ export function CanvasObjectView({
         </>,
         `${humanizeType(obj.type)} ${obj.label}`,
         "rounded-2xl",
+        undefined,
+        { slotOverlay: tableChairSlotOverlay(obj, slotHighlight, chairSlotPreview) },
       );
     }
 
@@ -381,6 +456,7 @@ export function CanvasObjectView({
       const guest = obj.meta.guestName?.trim();
       const labelPart = obj.label?.trim() ? `, ${obj.label.trim()}` : "";
       const aria = guest ? `Chair${labelPart}, ${guest}` : `Chair${labelPart}`;
+      const hideCaption = !obj.label?.trim() && !guest;
       return wrap(
         <div className="relative flex h-full w-full items-center justify-center rounded-xl bg-gradient-to-b from-[#fffdf8] via-amber-50/95 to-[#f5edd8]">
           <div className="relative z-10 flex h-[82%] w-[82%] items-center justify-center drop-shadow-sm">
@@ -390,6 +466,7 @@ export function CanvasObjectView({
         aria,
         "rounded-xl",
         { backgroundColor: "#fef9c3" },
+        { noExternalCaption: hideCaption },
       );
     }
 
@@ -464,13 +541,13 @@ export function CanvasObjectView({
     case "text_label":
       return wrap(
         <p
-          className="flex h-full w-full items-center justify-center px-2 text-center text-base leading-tight font-semibold tracking-wide text-balance drop-shadow-sm md:text-lg"
+          className="flex h-full min-h-0 w-full items-center justify-center overflow-visible px-2 text-center text-sm leading-snug font-semibold tracking-wide text-balance drop-shadow-sm sm:text-base"
           style={{ color: obj.color }}
         >
           {obj.label}
         </p>,
         `Label ${obj.label}`,
-        "rounded-xl border-transparent bg-transparent shadow-none",
+        "overflow-visible rounded-xl border-transparent bg-transparent shadow-none",
         {
           backgroundColor: "transparent",
           boxShadow: "none",
@@ -512,13 +589,18 @@ export function CanvasObjectView({
 
     case "projector_screen":
       return wrap(
-        <div className="flex h-full w-full items-center justify-center bg-gradient-to-b from-slate-100 to-slate-300">
-          <IconScreen />
+        <div className="flex h-full w-full min-w-0 items-center justify-center gap-2 bg-gradient-to-b from-slate-100 to-slate-300 px-2">
+          <div className="flex h-[72%] max-h-[26px] w-10 shrink-0 items-center justify-center [&_svg]:h-full [&_svg]:w-full">
+            <IconScreen />
+          </div>
+          <span className="min-w-0 truncate text-[11px] font-semibold leading-tight tracking-wide text-slate-900 sm:text-xs">
+            {obj.label?.trim() || "Screen"}
+          </span>
         </div>,
         `Screen ${obj.label}`,
         "rounded-lg",
         undefined,
-        { useColorFill: false },
+        { useColorFill: false, noExternalCaption: true },
       );
 
     case "plant_decor":
@@ -567,6 +649,47 @@ export function CanvasObjectView({
         "rounded-2xl",
         undefined,
         { useColorFill: false },
+      );
+
+    case "church_pew":
+      return wrap(
+        <div className="relative h-full w-full overflow-hidden rounded-md border-2 border-[#422006] bg-gradient-to-b from-amber-100 via-amber-300 to-amber-700">
+          <svg viewBox="0 0 120 20" className="h-full w-full opacity-90" preserveAspectRatio="none" aria-hidden>
+            <line x1="6" y1="7" x2="114" y2="7" stroke="#422006" strokeWidth="1.4" strokeLinecap="round" />
+            <line x1="6" y1="13" x2="114" y2="13" stroke="#422006" strokeWidth="1.4" strokeLinecap="round" />
+          </svg>
+        </div>,
+        `Church pew ${obj.label}`,
+        "rounded-md",
+      );
+
+    case "outdoor_tent":
+      return wrap(
+        <div className="relative h-full w-full overflow-hidden rounded-xl border-2 border-amber-900/45 bg-[repeating-linear-gradient(118deg,#fffbeb_0px,#fffbeb_10px,#fde68a_10px,#fde68a_20px)]">
+          <div
+            className="absolute inset-x-[8%] top-0 h-[26%] bg-amber-50/95"
+            style={{ clipPath: "polygon(50% 0%, 100% 100%, 0% 100%)" }}
+            aria-hidden
+          />
+          <div className="pointer-events-none absolute inset-x-0 bottom-0 top-[22%] border-t-2 border-amber-900/35" aria-hidden />
+        </div>,
+        `Tent ${obj.label}`,
+        "rounded-xl",
+      );
+
+    case "garden_arbor":
+      return wrap(
+        <div className="relative h-full w-full overflow-hidden rounded-lg border-2 border-green-900/35 bg-gradient-to-b from-lime-50 to-emerald-200">
+          <svg viewBox="0 0 100 72" className="h-full w-full" preserveAspectRatio="none" aria-hidden>
+            <rect x="10" y="18" width="9" height="52" rx="1" fill="#365314" />
+            <rect x="81" y="18" width="9" height="52" rx="1" fill="#365314" />
+            <path d="M6 22 Q50 4 94 22" fill="none" stroke="#166534" strokeWidth="3.2" strokeLinecap="round" />
+            <path d="M12 24 L88 24" stroke="#15803d" strokeWidth="2.2" strokeLinecap="round" />
+            <path d="M18 28 L82 28" stroke="#22c55e" strokeWidth="1" strokeOpacity="0.5" />
+          </svg>
+        </div>,
+        `Garden arbor ${obj.label}`,
+        "rounded-lg",
       );
 
     default:

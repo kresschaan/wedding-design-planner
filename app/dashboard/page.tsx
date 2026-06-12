@@ -14,10 +14,10 @@ export default async function DashboardPage() {
     redirect("/login");
   }
 
-  const { data, error } = await supabase
-    .from("layouts")
-    .select("id,name,venue_name,location,updated_at")
-    .order("updated_at", { ascending: false });
+  // Use `*` so the query works before and after `venue_setting` migration (PostgREST returns only real columns).
+  const { data, error } = await supabase.from("layouts").select("*").order("updated_at", {
+    ascending: false,
+  });
 
   if (error) {
     return (

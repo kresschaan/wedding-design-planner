@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { useLayoutEditorStore } from "@/stores/layout-editor-store";
 import { isChairType, isTableLikeType } from "@/types/layout";
 import { Button } from "@/components/ui/button";
@@ -81,6 +82,10 @@ export function GuestAssignmentPanel() {
             });
           }}
         />
+        <p className="text-xs text-muted-foreground">
+          Set a positive number (1–24) to show dashed seat rings on the canvas. Drag chairs near a
+          ring to snap them into free seats.
+        </p>
       </div>
       <div className="space-y-2">
         <Label htmlFor="guests">Guest names (one per line)</Label>
@@ -102,15 +107,95 @@ export function GuestAssignmentPanel() {
   );
 }
 
+function ChairRingTableSection({ tableId }: { tableId: string }) {
+  const obj = useLayoutEditorStore((s) => s.document.objects.find((o) => o.id === tableId));
+  const updateObject = useLayoutEditorStore((s) => s.updateObject);
+  const placeChairRingAroundTable = useLayoutEditorStore((s) => s.placeChairRingAroundTable);
+  const [includeTableInGroup, setIncludeTableInGroup] = useState(false);
+
+  if (!obj || !isTableLikeType(obj.type)) return null;
+
+  const raw = obj.meta.seatCount;
+  const ringCount = Math.min(24, Math.max(1, raw && raw > 0 ? raw : 8));
+
+  return (
+    <div className="space-y-3 rounded-lg border border-border/60 bg-muted/25 p-3">
+      <p className="text-xs font-medium text-muted-foreground">Chair ring</p>
+      <p className="text-xs text-muted-foreground">
+        Evenly spaces chairs around this table. Run again to replace the previous ring for this
+        table. Count is saved as seat count (1–24) and matches the Guests tab.
+      </p>
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-sm font-medium">Chairs</span>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="h-8 w-8 shrink-0 p-0"
+          disabled={ringCount <= 1}
+          onClick={() =>
+            updateObject(tableId, { meta: { seatCount: Math.max(1, ringCount - 1) } })
+          }
+          aria-label="Decrease chair count"
+        >
+          −
+        </Button>
+        <span className="min-w-[2ch] text-center text-sm tabular-nums">{ringCount}</span>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="h-8 w-8 shrink-0 p-0"
+          disabled={ringCount >= 24}
+          onClick={() =>
+            updateObject(tableId, { meta: { seatCount: Math.min(24, ringCount + 1) } })
+          }
+          aria-label="Increase chair count"
+        >
+          +
+        </Button>
+      </div>
+      <label className="flex cursor-pointer items-center gap-2 text-sm">
+        <input
+          type="checkbox"
+          className="size-4 rounded border-input accent-primary"
+          checked={includeTableInGroup}
+          onChange={(e) => setIncludeTableInGroup(e.target.checked)}
+        />
+        Move table with chairs (one group)
+      </label>
+      <Button
+        type="button"
+        className="w-full"
+        onClick={() =>
+          placeChairRingAroundTable(tableId, ringCount, {
+            includeTableInGroup: includeTableInGroup,
+          })
+        }
+      >
+        Ring chairs
+      </Button>
+    </div>
+  );
+}
+
 export function PropertiesPanel({ embedded = false }: { embedded?: boolean }) {
   const selectedIds = useLayoutEditorStore((s) => s.selectedIds);
   const objects = useLayoutEditorStore((s) => s.document.objects);
   const updateObject = useLayoutEditorStore((s) => s.updateObject);
   const deleteSelection = useLayoutEditorStore((s) => s.deleteSelection);
   const duplicateSelection = useLayoutEditorStore((s) => s.duplicateSelection);
+  const groupSelection = useLayoutEditorStore((s) => s.groupSelection);
+  const ungroupSelection = useLayoutEditorStore((s) => s.ungroupSelection);
+  const setSelectionLocked = useLayoutEditorStore((s) => s.setSelectionLocked);
 
   const leadId = selectedIds[selectedIds.length - 1];
   const obj = objects.find((o) => o.id === leadId);
+
+  const anyGrouped = selectedIds.some((id) => objects.find((o) => o.id === id)?.meta.groupId);
+  const allLocked =
+    selectedIds.length > 0 &&
+    selectedIds.every((id) => objects.find((o) => o.id === id)?.meta.locked);
 
   if (!obj) {
     return (
@@ -118,7 +203,7 @@ export function PropertiesPanel({ embedded = false }: { embedded?: boolean }) {
         className={
           embedded
             ? "flex w-full flex-col gap-3 p-4"
-            : "flex w-80 shrink-0 flex-col gap-3 rounded-xl border border-border/80 bg-card/80 p-4 shadow-sm"
+            : "flex w-80 shrink-0 flex-col gap-3 rounded-xl border border-border/80 bg-card p-4 shadow-sm"
         }
       >
         <p className="text-sm font-medium">Properties</p>
@@ -134,7 +219,7 @@ export function PropertiesPanel({ embedded = false }: { embedded?: boolean }) {
       className={
         embedded
           ? "flex w-full flex-col gap-0 bg-transparent"
-          : "flex w-80 shrink-0 flex-col gap-3 rounded-xl border border-border/80 bg-card/80 p-0 shadow-sm"
+          : "flex w-80 shrink-0 flex-col gap-3 rounded-xl border border-border/80 bg-card p-0 shadow-sm"
       }
     >
       <div className="border-b border-border/70 px-4 py-3">
@@ -249,6 +334,59 @@ export function PropertiesPanel({ embedded = false }: { embedded?: boolean }) {
                     updateObject(obj.id, { meta: { notes: e.target.value || undefined } })
                   }
                 />
+              </div>
+              {isTableLikeType(obj.type) ? (
+                <ChairRingTableSection key={obj.id} tableId={obj.id} />
+              ) : null}
+              <Separator />
+              <div className="space-y-2">
+                <p className="text-xs font-medium text-muted-foreground">Groups &amp; lock</p>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    disabled={selectedIds.length < 2}
+                    onClick={() => groupSelection()}
+                  >
+                    Group selection
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    disabled={!anyGrouped}
+                    onClick={() => ungroupSelection()}
+                  >
+                    Ungroup
+                  </Button>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={selectedIds.length === 0 || allLocked}
+                    onClick={() => setSelectionLocked(true)}
+                  >
+                    Lock position
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={selectedIds.length === 0 || !selectedIds.some((id) => objects.find((o) => o.id === id)?.meta.locked)}
+                    onClick={() => setSelectionLocked(false)}
+                  >
+                    Unlock
+                  </Button>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Grouped items move together. Locked items show a padlock on the canvas and
+                  can&apos;t be dragged or resized — use Unlock, or drag another item in the same
+                  group. Round and banquet tables show dashed seat rings; drag a lone chair near a
+                  ring to snap into a free slot on release.
+                </p>
               </div>
               <Separator />
               <div className="flex flex-wrap gap-2">
